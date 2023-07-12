@@ -20,7 +20,6 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from aqt.jax_legacy.jax import quantization as aqt
 import flax
 from flax import linen as nn
 from flax.linen import partitioning

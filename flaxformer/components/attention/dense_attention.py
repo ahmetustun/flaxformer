@@ -20,9 +20,6 @@ import abc
 import functools
 from typing import Callable, Optional, Tuple, Union
 
-from aqt.jax_legacy.jax import flax_layers as aqt_flax_layers
-from aqt.jax_legacy.jax import quant_config as aqt_config
-from aqt.jax_legacy.jax import quantization as aqt
 import chex
 from flax import linen as nn
 from flax.core import variables
@@ -1139,8 +1136,8 @@ class MultiQueryDotProductAttention(nn.Module, DenseAttention):
   k_conv: Optional[nn.Module] = None
   v_conv: Optional[nn.Module] = None
   use_aqt: Optional[bool] = False
-  weight_params: Optional[aqt.QuantOps.WeightParams] = None
-  act_params: Optional[aqt.QuantOps.ActHParams] = None
+  weight_params = None
+  act_params = None
   possibly_use_quantized_vars: bool = False
 
   def update_cache_prefill(
@@ -1370,61 +1367,18 @@ class MultiQueryDotProductAttention(nn.Module, DenseAttention):
         inputs,
         reshape_kernel=True,
     ):
-      if self.use_aqt:
-        if self.weight_params is None and self.act_params is None:
-          raise ValueError(
-              'If use_aqt is True, either of weights or acts quantization need '
-              'to be specified using arguments `weight_params` or `act_params`.'
-          )
-        # TODO: Push the "quantized vs not" decision down into
-        # the AQT library. Currently we make that decision here, because the AQT
-        # library doesn't support DenseGeneral.
-        aqt_context = aqt_config.DynamicContext(
-            update_bounds=False, collect_acts_stats=False
-        )
-        weight_prec = self.weight_params.prec if self.weight_params else None
-        half_shift = (
-            self.weight_params.half_shift if self.weight_params else False
-        )
-        aqt_hparams = aqt_flax_layers.DenseAqt.HParams(
-            weight_prec=weight_prec,
-            weight_half_shift=half_shift,
-            quant_act=self.act_params,  # currently supports fixed bounds only.
-            quant_type=aqt.QuantType.AQT,
-            weight_quant_granularity=aqt_config.QuantGranularity.PER_CHANNEL,
-        )
-        return aqt_flax_layers.DenseAqt(
-            features=features,
-            hparams=aqt_hparams,
-            train=enable_dropout,
-            dynamic_context=aqt_context,
-            paxis_name=None,
-            # No "cross-replica" reduction expressed in the XLA graph at this
-            # stage. Will be imposed later, automatically, by XLA SPMD.
-            use_bias=self.use_bias,
-            kernel_init=self.kernel_init,
-            bias_init=self.bias_init,
-            dtype=self.dtype,
-            kernel_axis_names=kernel_axis_names,
-            # we do not have reshape kernel option here but we explicitly
-            # reshape kernel.
-            precision=self.precision,
-            possibly_use_quantized_vars=self.possibly_use_quantized_vars,
-            name=name,
-        )(inputs, padding_mask=None)
-      else:
-        return dense.DenseGeneral(
-            axis=axis,
-            features=features,
-            bias_init=self.bias_init,
-            use_bias=self.use_bias,
-            dtype=self.dtype,
-            kernel_init=kernel_init,
-            precision=self.precision,
-            kernel_axis_names=kernel_axis_names,
-            reshape_kernel=reshape_kernel,
-            name=name,
-        )(inputs)
+      return dense.DenseGeneral(
+          axis=axis,
+          features=features,
+          bias_init=self.bias_init,
+          use_bias=self.use_bias,
+          dtype=self.dtype,
+          kernel_init=kernel_init,
+          precision=self.precision,
+          kernel_axis_names=kernel_axis_names,
+          reshape_kernel=reshape_kernel,
+          name=name,
+      )(inputs)
 
     # Project inputs_q to multi-headed q and single-headed k and v
     # query dimension is then [batch..., length, num_heads, features_per_head]
@@ -1775,50 +1729,21 @@ class MultiQueryDotProductAttention(nn.Module, DenseAttention):
       kernel_axis_names = ['heads', 'kv', 'embed']
       # TODO: activation quantization support is unimplemented
       # here.
-      if self.use_aqt and self.weight_params is not None:
-        weight_prec = self.weight_params.prec if self.weight_params else None
-        half_shift = (
-            self.weight_params.half_shift if self.weight_params else False
-        )
-        aqt_hparams = aqt_flax_layers.DenseGeneralAqt.HParams(
-            weight_prec=weight_prec,
-            weight_half_shift=half_shift,
-            quant_act=None,  # currently supports fixed bounds only.
-            weight_quant_granularity=aqt_config.QuantGranularity.PER_CHANNEL,
-        )
-        out = aqt_flax_layers.DenseGeneralAqt(
-            hparams=aqt_hparams,
-            train=enable_dropout,
-            possibly_use_quantized_vars=self.possibly_use_quantized_vars,
-            features=features,
-            axis=(-2, -1),
-            kernel_init=self.kernel_init,
-            bias_init=self.bias_init,
-            use_bias=self.use_bias,
-            dtype=self.dtype,
-            precision=self.precision,
-            kernel_axis_names=kernel_axis_names,
-            reshape_kernel=not self.split_head_kernel,
-            name='out',
-        )(  # pytype: disable=wrong-arg-types
-            x
-        )
-      else:
-        # Back to the original inputs dimensions.
-        out = dense.DenseGeneral(
-            features=features,
-            axis=(-2, -1),
-            kernel_init=self.kernel_init,
-            bias_init=self.bias_init,
-            use_bias=self.use_bias,
-            dtype=self.dtype,
-            precision=self.precision,
-            kernel_axis_names=kernel_axis_names,
-            reshape_kernel=not self.split_head_kernel,
-            name='out',
-        )(  # pytype: disable=wrong-arg-types
-            x
-        )
+      # Back to the original inputs dimensions.
+      out = dense.DenseGeneral(
+          features=features,
+          axis=(-2, -1),
+          kernel_init=self.kernel_init,
+          bias_init=self.bias_init,
+          use_bias=self.use_bias,
+          dtype=self.dtype,
+          precision=self.precision,
+          kernel_axis_names=kernel_axis_names,
+          reshape_kernel=not self.split_head_kernel,
+          name='out',
+      )(  # pytype: disable=wrong-arg-types
+          x
+      )
     else:
       # in fused parallel layer, fused outer dense operation is external
       out = x

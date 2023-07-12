@@ -20,10 +20,6 @@ import functools
 import operator
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Tuple, Union
 
-from aqt.jax_legacy.jax import flax_layers as aqt_flax_layers
-from aqt.jax_legacy.jax import quant_config as aqt_config
-from aqt.jax_legacy.jax import quantization as aqt
-
 from flax import linen as nn
 from flax.core import frozen_dict
 from flax.linen import partitioning
@@ -243,8 +239,8 @@ class MlpBlock(nn.Module):
   data_sharding_constraints: Optional[Tuple[str, ...]] = None
   activation_partitioning_dims: Optional[int] = 2
   use_aqt: Optional[bool] = False
-  weight_params: Optional[aqt.QuantOps.WeightParams] = None
-  act_params: Optional[aqt.QuantOps.ActHParams] = None
+  weight_params = None
+  act_params = None
   possibly_use_quantized_vars: bool = False
 
   @nn.compact
@@ -264,57 +260,15 @@ class MlpBlock(nn.Module):
         inputs.shape[-1] if self.out_dim is None else self.out_dim)
 
     def dense(features, name, inputs, kernel_axis_names):
-      if self.use_aqt:
-        if self.weight_params is None and self.act_params is None:
-          raise ValueError(
-              'If use_aqt is True, either of weights or acts quantization need '
-              'to be specified using arguments `weight_params` or `act_params`.'
-          )
-        # TODO: Push the "quantized vs not" decision down into the
-        # AQT library. Currently we make that decision here, because the AQT
-        # library doesn't support DenseGeneral, so there's extra reshapes here
-        # whose performance impact I don't know.
-        aqt_context = aqt_config.DynamicContext(
-            update_bounds=False, collect_acts_stats=False)
-        weight_prec = self.weight_params.prec if self.weight_params else None
-        half_shift = self.weight_params.half_shift if self.weight_params else False
-        aqt_hparams = aqt_flax_layers.DenseAqt.HParams(
-            weight_prec=weight_prec,
-            weight_half_shift=half_shift,
-            quant_act=self.act_params,  # currently supports fixed bounds only.
-            quant_type=aqt.QuantType.AQT,
-            weight_quant_granularity=aqt_config.QuantGranularity.PER_CHANNEL,
-        )
-        batch, seq_len, channels = inputs.shape
-        inputs = inputs.reshape((batch * seq_len, channels))
-
-        result = aqt_flax_layers.DenseAqt(
-            features=features,
-            hparams=aqt_hparams,
-            train=enable_dropout,
-            dynamic_context=aqt_context,
-            paxis_name=None,
-            # No "cross-replica" reduction expressed in the XLA graph at this
-            # stage. Will be imposed later, automatically, by XLA SPMD.
-            use_bias=self.use_bias,
-            kernel_init=self.kernel_init,
-            bias_init=self.bias_init,
-            dtype=self.dtype,
-            kernel_axis_names=kernel_axis_names,
-            name=name,
-            possibly_use_quantized_vars=self.possibly_use_quantized_vars,
-        )(inputs, padding_mask=None)
-        return result.reshape((batch, seq_len, features))
-      else:
-        return DenseGeneral(
-            features,
-            use_bias=self.use_bias,
-            dtype=self.dtype,
-            kernel_init=self.kernel_init,
-            bias_init=self.bias_init,
-            kernel_axis_names=kernel_axis_names,
-            name=name)(
-                inputs)
+      return DenseGeneral(
+          features,
+          use_bias=self.use_bias,
+          dtype=self.dtype,
+          kernel_init=self.kernel_init,
+          bias_init=self.bias_init,
+          kernel_axis_names=kernel_axis_names,
+          name=name)(
+              inputs)
 
     # Iterate over specified MLP input activation functions.
     # e.g. ('relu',) or ('gelu', 'linear') for gated-gelu.

@@ -24,18 +24,9 @@ try:
 except IOError:
   README = ""
 
-install_requires = [
-    "chex>=0.1.4",
-    "numpy>=1.12",
-    "jax>=0.2.21",
-    "flax>=0.5.1",
-    "aqtp[jax_legacy]>=0.0.10",
-]
+install_requires = []
 
-tests_require = [
-    "absl-py", "pytest", "tensorflow>=2.4.1", "gin-config",
-    "t5x @ git+https://github.com/google-research/t5x"
-]
+tests_require = []
 
 setup(
     name="flaxformer",
