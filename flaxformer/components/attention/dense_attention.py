@@ -498,6 +498,11 @@ class MultiHeadDotProductAttention(nn.Module, DenseAttention):
   k_conv: Optional[nn.Module] = None
   v_conv: Optional[nn.Module] = None
 
+  lora_q_conv: Optional[nn.Module] = None
+  lora_k_conv: Optional[nn.Module] = None
+  lora_v_conv: Optional[nn.Module] = None
+  lora_output_conv: Optional[nn.Module] = None
+
   def update_cache_prefill(
       self,
       key: Array,
@@ -792,6 +797,30 @@ class MultiHeadDotProductAttention(nn.Module, DenseAttention):
           kernel_axis_names=['embed', 'heads', 'kv'],
           name='value',
       )(inputs_kv)
+      
+      # LoRA for the second dense in k/q/v    
+      if self.lora_q_conv is not None:
+        # LoRA transformation
+        query = query + self.lora_q_conv( # pylint: disable=not-callable
+                          inputs_q,
+                          decode=decode,
+                          prefill=prefill,
+                          prefill_lengths=prefill_lengths)
+      if self.lora_k_conv is not None:
+        # LoRA transformation
+        key = key + self.lora_k_conv( # pylint: disable=not-callable
+                          inputs_kv,
+                          decode=decode,
+                          prefill=prefill,
+                          prefill_lengths=prefill_lengths)
+      if self.lora_v_conv is not None:
+        # LoRA transformation
+        value = value + self.lora_v_conv( # pylint: disable=not-callable
+                          inputs_kv,
+                          decode=decode,
+                          prefill=prefill,
+                          prefill_lengths=prefill_lengths)
+      
     # TODO: should we fuse/slice along depth or head dim?
     elif self.kernels_to_fuse == 'qkv':
       if inputs_q is not inputs_kv:
@@ -1071,6 +1100,18 @@ class MultiHeadDotProductAttention(nn.Module, DenseAttention):
     )(  # pytype: disable=wrong-arg-types
         x
     )
+    
+    # LoRA for attention output projection
+    if self.lora_output_conv is not None:
+      # LoRA transformation
+      x = jnp.reshape(x, (x.shape[0], x.shape[1], self.num_heads * self.head_dim))
+      x = flax_partitioning.with_sharding_constraint(x, ('batch', 'length', 'embed'))
+      out = out + self.lora_output_conv( # pylint: disable=not-callable
+                        x,
+                        decode=decode,
+                        prefill=prefill,
+                        prefill_lengths=prefill_lengths)
+    
     return out
 
 

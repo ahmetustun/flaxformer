@@ -27,7 +27,7 @@ from flax.linen.linear import default_kernel_init
 from jax import lax
 import jax.numpy as jnp
 import numpy as np
-
+import jax
 from flaxformer import activation_partitioning
 from flaxformer.types import Array
 from flaxformer.types import DType
@@ -243,6 +243,9 @@ class MlpBlock(nn.Module):
   act_params = None
   possibly_use_quantized_vars: bool = False
 
+  lora_intermediate_conv: Optional[nn.Module] = None
+  lora_output_conv: Optional[nn.Module] = None
+
   @nn.compact
   def __call__(self,
                inputs,
@@ -290,6 +293,16 @@ class MlpBlock(nn.Module):
           dense_name = 'wi' if len(self.activations) == 1 else f'wi_{idx}'
           x = dense(self.intermediate_dim, dense_name, inputs,
                     (self.input_axis_name, self.intermediate_axis_name))
+          jax.debug.breakpoint()
+          # LoRA for the first dense in MlpBlock    
+          if idx == 0 and self.lora_intermediate_conv is not None:
+            # LoRA transformation
+            x = x + self.lora_intermediate_conv( # pylint: disable=not-callable
+                    inputs,
+                    decode=decode,
+                    prefill=prefill,
+                    prefill_lengths=prefill_lengths)
+
           x = _convert_to_activation_function(act_fn)(x)
           if idx == 0 and self.intermediate_conv is not None:
             x = self.intermediate_conv(  # pylint: disable=not-callable
@@ -362,6 +375,16 @@ class MlpBlock(nn.Module):
     else:
       output = dense(actual_out_dim, 'wo', x,
                      (self.intermediate_axis_name, self.output_axis_name))
+      
+      # LoRA for the second dense in MlpBlock
+      if self.lora_output_conv is not None: 
+        # LoRA transformation
+        output = output + self.lora_output_conv( # pylint: disable=not-callable
+                          x,
+                          decode=decode,
+                          prefill=prefill,
+                          prefill_lengths=prefill_lengths)
+        
       # TODO: Change the `None` branch to not applying dropout
       # instead of fallback to default dropout.
       if self.final_dropout:
