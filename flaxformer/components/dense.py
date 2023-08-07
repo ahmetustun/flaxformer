@@ -293,7 +293,7 @@ class MlpBlock(nn.Module):
           dense_name = 'wi' if len(self.activations) == 1 else f'wi_{idx}'
           x = dense(self.intermediate_dim, dense_name, inputs,
                     (self.input_axis_name, self.intermediate_axis_name))
-          jax.debug.breakpoint()
+          
           # LoRA for the first dense in MlpBlock    
           if idx == 0 and self.lora_intermediate_conv is not None:
             # LoRA transformation
